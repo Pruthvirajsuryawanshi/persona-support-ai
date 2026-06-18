@@ -132,7 +132,6 @@ export function ChatWindow({ threadId }: { threadId: string }) {
         <div className="max-w-3xl mx-auto w-full px-4 py-3">
           <PromptInput onSubmit={handleSubmit}>
             <PromptInputTextarea
-              ref={textareaRef}
               placeholder="Ask a question — persona is detected automatically…"
               disabled={isLoading}
             />
