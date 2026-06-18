@@ -142,12 +142,12 @@ ${contextText}`;
         persona: classification.persona,
         persona_confidence: classification.confidence,
         escalated: escalate,
-        handoff_summary: handoff,
+        handoff_summary: handoff as never,
         sources: chunks.map((c) => ({
           source: c.source,
           title: c.title,
           similarity: Number(c.similarity.toFixed(3)),
-        })),
+        })) as never,
         top_score: Number(topScore.toFixed(3)),
       })
       .select("*")
