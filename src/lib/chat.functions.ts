@@ -74,9 +74,6 @@ export const sendMessage = createServerFn({ method: "POST" })
 
     let assistantContent: string;
     let handoff: Record<string, unknown> | null = null;
-    // helper-typed cast for jsonb column
-    const asJson = <T,>(v: T) => v as unknown as never;
-    void asJson;
 
     if (escalate) {
       handoff = {
