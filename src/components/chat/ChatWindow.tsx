@@ -51,14 +51,8 @@ export function ChatWindow({ threadId }: { threadId: string }) {
       setPendingUser(null);
       toast.error(e.message);
     },
-    onSettled: () => {
-      requestAnimationFrame(() => textareaRef.current?.focus());
-    },
   });
 
-  useEffect(() => {
-    textareaRef.current?.focus();
-  }, [threadId]);
 
   const handleSubmit = (m: PromptInputMessage) => {
     const text = m.text?.trim();
