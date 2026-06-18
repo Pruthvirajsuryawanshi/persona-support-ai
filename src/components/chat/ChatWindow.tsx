@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
 import { getThreadMessages } from "@/lib/threads.functions";
@@ -30,7 +30,7 @@ export function ChatWindow({ threadId }: { threadId: string }) {
   const queryClient = useQueryClient();
   const getMessagesFn = useServerFn(getThreadMessages);
   const sendFn = useServerFn(sendMessage);
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // (focus state managed by AI Elements PromptInput internally)
 
   const messagesQuery = useQuery({
     queryKey: ["messages", threadId],
