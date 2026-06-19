@@ -1,0 +1,74 @@
+GDPR & DATA PRIVACY POLICY
+===========================
+
+Last Updated: January 1, 2025
+
+1. DATA CONTROLLER
+-------------------
+Example Corp Ltd. acts as the Data Controller for all personal data processed
+through our platform. Contact: privacy@example.com
+
+2. WHAT DATA WE COLLECT
+------------------------
+2.1 Account Data
+  - Name, email address, company name
+  - Billing address and payment method metadata (not card numbers — handled by Stripe)
+  - Account preferences and settings
+
+2.2 Usage Data
+  - Log data: IP address, browser type, pages visited, timestamps
+  - Feature usage metrics (aggregated and anonymized)
+  - API request logs (retained for 90 days)
+
+2.3 Support Data
+  - Content of support conversations
+  - Uploaded files shared during support sessions
+
+3. LEGAL BASIS FOR PROCESSING
+------------------------------
+  - Contract performance: to deliver the service you subscribed to
+  - Legitimate interests: security, fraud prevention, product improvement
+  - Legal obligation: invoice retention for tax compliance
+  - Consent: marketing emails (can be withdrawn at any time)
+
+4. YOUR RIGHTS UNDER GDPR
+--------------------------
+As an EU/EEA data subject, you have the right to:
+  - Access: request a copy of your personal data
+  - Rectification: correct inaccurate data
+  - Erasure ("Right to be Forgotten"): delete your account and data
+  - Portability: export your data in machine-readable format
+  - Restriction: limit how we process your data
+  - Objection: object to processing based on legitimate interests
+
+To exercise these rights, email privacy@example.com. We respond within 30 days.
+
+5. DATA EXPORT
+---------------
+Export your data at any time from Settings → Data → Export All.
+Exports are delivered as a ZIP file within 24 hours.
+
+6. DATA RETENTION
+-----------------
+  - Account data: retained while account is active + 14-day grace period
+  - Support conversations: 2 years from date of conversation
+  - API logs: 90 days
+  - Invoices: 7 years (legal requirement)
+  - Anonymized analytics: indefinitely (no personal identifiers)
+
+7. DATA TRANSFERS
+-----------------
+Your data is stored in EU data centers (Frankfurt, Germany).
+Where data is transferred outside the EEA, we use Standard Contractual Clauses
+approved by the European Commission.
+
+8. COOKIES
+----------
+We use strictly necessary cookies (session management) and optional analytics
+cookies. You can manage cookie preferences via the Cookie Settings banner.
+
+9. CONTACT
+----------
+Data Protection Officer: dpo@example.com
+Supervisory Authority: You have the right to lodge a complaint with your
+national data protection authority.

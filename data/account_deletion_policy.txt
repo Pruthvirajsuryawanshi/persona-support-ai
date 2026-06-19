@@ -1,0 +1,56 @@
+ACCOUNT DELETION AND DATA RETENTION POLICY
+==========================================
+
+Effective Date: January 1, 2025
+
+1. ACCOUNT DELETION REQUEST
+----------------------------
+To request permanent account deletion:
+  - Go to Settings → Account → Danger Zone → Delete Account
+  - Confirm with your password
+  - A 14-day grace period begins immediately
+
+During the 14-day grace period, you can cancel the deletion by logging in and
+clicking "Cancel Deletion" in the account banner.
+
+After 14 days, all account data is permanently and irreversibly removed.
+
+2. WHAT IS DELETED
+-------------------
+Upon confirmed deletion, the following data is permanently removed:
+  - User profile and credentials
+  - All conversation threads and message history
+  - API keys and integration configurations
+  - Billing payment methods (not invoices — see Section 4)
+  - Uploaded files and attachments
+
+3. WHAT IS RETAINED
+--------------------
+The following data may be retained as required by law or for legitimate
+business purposes:
+  - Invoices and payment records: retained for 7 years (tax compliance)
+  - Anonymized aggregate usage statistics (no personal identifiers)
+  - Records required for fraud prevention or legal obligations
+
+4. BILLING RECORDS
+------------------
+Invoices issued before account deletion are retained for 7 years in accordance
+with financial regulations. You can download all invoices before deletion from
+Billing → Invoice History.
+
+5. DATA EXPORT BEFORE DELETION
+--------------------------------
+We strongly recommend exporting your data before requesting deletion:
+  - Settings → Data → Export All
+  - Exports are provided as a ZIP file within 24 hours
+  - Export link is valid for 72 hours
+
+6. TEAM ACCOUNTS
+-----------------
+Only the account Owner can delete an organization account.
+All member accounts must be removed before the organization can be deleted.
+
+7. CONTACT
+----------
+For account deletion questions: privacy@example.com
+Response time: 1–2 business days
