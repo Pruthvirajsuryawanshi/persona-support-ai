@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, Suspense } from "react";
 import { Link, Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
@@ -12,6 +12,7 @@ import { cn } from "@/lib/utils";
 import logo from "@/assets/logo.png";
 
 export const Route = createFileRoute("/_authenticated/chat")({
+  ssr: false,
   head: () => ({
     meta: [
       { title: "Persona Support — AI customer support agent" },
@@ -22,7 +23,20 @@ export const Route = createFileRoute("/_authenticated/chat")({
       },
     ],
   }),
-  component: ChatLayout,
+  component: () => (
+    <Suspense
+      fallback={
+        <div className="grid h-screen grid-cols-[260px_1fr] bg-background">
+          <aside className="border-r bg-sidebar text-sidebar-foreground" />
+          <main className="flex items-center justify-center">
+            <Loader2 className="h-6 w-6 animate-spin" />
+          </main>
+        </div>
+      }
+    >
+      <ChatLayout />
+    </Suspense>
+  ),
 });
 
 function ChatLayout() {
