@@ -35,7 +35,7 @@ CHROMA_COLLECTION: str = "support_kb"      # Collection name inside ChromaDB
 DATA_DIR: str = "./data"       # Folder containing .txt / .md / .pdf support docs
 
 # ── Escalation ─────────────────────────────────────────────────────────────────
-CONFIDENCE_THRESHOLD: float = 0.40   # Escalate if top cosine similarity is below this
+CONFIDENCE_THRESHOLD: float = 0.20   # Escalate if top cosine similarity is below this
 
 SENSITIVE_KEYWORDS: list[str] = [
     "refund",

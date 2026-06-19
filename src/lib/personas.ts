@@ -29,7 +29,7 @@ export const PERSONA_META: Record<
 };
 
 /** Escalate when top cosine similarity from RAG is below this value. */
-export const RETRIEVAL_CONFIDENCE_THRESHOLD = 0.4;
+export const RETRIEVAL_CONFIDENCE_THRESHOLD = 0.2;
 
 /** @deprecated Use RETRIEVAL_CONFIDENCE_THRESHOLD */
 export const CONFIDENCE_THRESHOLD = RETRIEVAL_CONFIDENCE_THRESHOLD;
