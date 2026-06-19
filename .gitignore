@@ -36,3 +36,8 @@ dist-ssr
 
 # Local RAG embedding cache (rebuilt from data/)
 .rag-cache/
+
+# Python / Local DB
+venv/
+__pycache__/
+chroma_db/
