@@ -10,17 +10,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── API Credentials ────────────────────────────────────────────────────────────
-GEMINI_API_KEY: str = os.environ.get("GEMINI_API_KEY", "")
+OPENROUTER_API_KEY: str = os.environ.get("OPENROUTER_API_KEY", "")
 
-if not GEMINI_API_KEY:
+if not OPENROUTER_API_KEY:
     raise EnvironmentError(
-        "GEMINI_API_KEY is not set. "
-        "Add it to your .env file: GEMINI_API_KEY=\"your_key_here\""
+        "OPENROUTER_API_KEY is not set. "
+        "Add it to your .env file: OPENROUTER_API_KEY=\"your_key_here\""
     )
 
 # ── Model Names ────────────────────────────────────────────────────────────────
-GEMINI_MODEL: str = "gemini-2.5-flash-preview-05-20"   # Change to "gemini-2.0-flash" if unavailable
-EMBEDDING_MODEL: str = "text-embedding-004"
+OPENROUTER_MODEL: str = "meta-llama/llama-3.1-70b-instruct"  # High-quality open model via OpenRouter
+EMBEDDING_MODEL: str = "text-embedding-3-small"  # Using OpenAI via OpenRouter
 
 # ── RAG / Chunking ─────────────────────────────────────────────────────────────
 CHUNK_SIZE: int = 500          # Characters per chunk

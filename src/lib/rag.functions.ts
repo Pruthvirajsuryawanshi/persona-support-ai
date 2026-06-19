@@ -39,8 +39,8 @@ export const seedKnowledgeBase = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => SeedInput.parse(d))
   .handler(async ({ data, context }) => {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) throw new Error("Missing GEMINI_API_KEY in environment");
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY in environment");
 
     try {
       return await seedKnowledgeBaseCore(context.supabase, apiKey, data?.force ?? false);

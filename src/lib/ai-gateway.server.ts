@@ -1,22 +1,27 @@
-import { createGoogleGenerativeAI } from "@ai-sdk/google";
-import { embed } from "ai";
-
-export function createGeminiProvider(apiKey: string) {
-  return createGoogleGenerativeAI({
-    apiKey: apiKey,
+export async function embedText(openrouterKey: string, input: string): Promise<number[]> {
+  // Use OpenAI's embedding model via OpenRouter
+  const response = await fetch("https://openrouter.ai/api/v1/embeddings", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${openrouterKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": "http://localhost:8080",
+      "X-Title": "Persona Support Agent",
+    },
+    body: JSON.stringify({
+      model: "openai/text-embedding-3-small",
+      input: input,
+    }),
   });
-}
 
-export async function embedText(apiKey: string, input: string): Promise<number[]> {
-  const google = createGeminiProvider(apiKey);
-  const { embedding } = await embed({
-    model: google.textEmbeddingModel("gemini-embedding-001"),
-    value: input,
-  });
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(`Embedding API error: ${error.error?.message || "Unknown error"}`);
+  }
 
-  // gemini-embedding-001 outputs 3072 dims but the DB schema is vector(1536).
-  // Truncate to the first 1536 dimensions so Postgres accepts it.
-  // All documents must be re-seeded with the same truncation so similarity
-  // scores remain consistent.
-  return embedding.slice(0, 1536);
+  const data = await response.json();
+  const embedding = data.data[0].embedding;
+
+  // text-embedding-3-small outputs 1536 dimensions, which matches the DB schema.
+  return embedding;
 }

@@ -27,17 +27,17 @@ type ClassifyResult = {
 const TOP_K = 3;
 
 function getApiKey(): string {
-  let apiKey = process.env.GEMINI_API_KEY;
+  let apiKey = process.env.OPENROUTER_API_KEY;
   if (!apiKey) {
     try {
       const envContent = fs.readFileSync(path.resolve(process.cwd(), ".env"), "utf-8");
-      const match = envContent.match(/GEMINI_API_KEY="?([^"\n]+)"?/);
+      const match = envContent.match(/OPENROUTER_API_KEY="?([^"\n]+)"?/);
       if (match) apiKey = match[1];
     } catch {
       // ignore
     }
   }
-  if (!apiKey) throw new Error("Missing GEMINI_API_KEY in environment");
+  if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY in environment");
   return apiKey;
 }
 
@@ -128,9 +128,9 @@ export const sendMessage = createServerFn({ method: "POST" })
 
       assistantContent = escalationMessage(classification.persona, escalationReason);
     } else {
-      const { createGeminiProvider } = await import("./ai-gateway.server");
-      const { generateText } = await import("ai");
-      const provider = createGeminiProvider(apiKey);
+      const apiKey = process.env.OPENROUTER_API_KEY;
+      if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY");
+
       const personaInstructions = personaPrompt(classification.persona);
       const contextBlock = buildContextBlock(retrievedChunks);
 
@@ -146,13 +146,36 @@ CRITICAL RULES:
 FACTUAL CONTEXT DOCUMENTS:
 ${contextBlock}`;
 
-      const { text } = await generateText({
-        model: provider("gemini-2.5-flash"),
-        system: systemPrompt,
-        messages: conversationMessages,
+      const headers = {
+        "Authorization": `Bearer ${apiKey}`,
+        "HTTP-Referer": "http://localhost:8080",
+        "X-Title": "Persona Support Agent",
+        "Content-Type": "application/json",
+      };
+
+      const payload = {
+        model: "meta-llama/llama-3.1-70b-instruct",
+        messages: [
+          { role: "system", content: systemPrompt },
+          ...conversationMessages,
+        ],
         temperature: 0.2,
+        max_tokens: 1000,
+      };
+
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers,
+        body: JSON.stringify(payload),
       });
-      assistantContent = text;
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(`OpenRouter error: ${error.error?.message || "Unknown error"}`);
+      }
+
+      const result = await response.json();
+      assistantContent = result.choices[0].message.content;
     }
 
     const sourcesForDb = retrievedChunks.map((c) => ({
@@ -297,27 +320,57 @@ function personaPrompt(persona: Persona): string {
 }
 
 async function classifyPersona(apiKey: string, message: string): Promise<ClassifyResult> {
-  const { createGeminiProvider } = await import("./ai-gateway.server");
-  const { generateObject } = await import("ai");
-  const provider = createGeminiProvider(apiKey);
-
   try {
-    const { object } = await generateObject({
-      model: provider("gemini-2.5-flash"),
-      schema: z.object({
-        persona: z.enum(["Technical Expert", "Frustrated User", "Business Executive"]),
-        confidence: z.number().min(0).max(1),
-        reasoning: z.string(),
-      }),
-      system: `You are a classification engine. Classify the support message into EXACTLY ONE persona:
+    const headers = {
+      "Authorization": `Bearer ${apiKey}`,
+      "HTTP-Referer": "http://localhost:8080",
+      "X-Title": "Persona Support Agent",
+      "Content-Type": "application/json",
+    };
+
+    const payload = {
+      model: "meta-llama/llama-3.1-70b-instruct",
+      messages: [
+        {
+          role: "system",
+          content: `You are a classification engine. Classify the support message into EXACTLY ONE persona and respond with ONLY valid JSON:
+{"persona": "...", "confidence": 0.0-1.0, "reasoning": "..."}
+
+Personas:
 - "Technical Expert": uses APIs/code/configs/jargon, asks systems-level questions.
 - "Frustrated User": emotional, urgent, exclamation marks, expresses inconvenience or anger.
 - "Business Executive": brief, focused on impact, ROI, timelines, deliverables.`,
-      prompt: message,
+        },
+        { role: "user", content: message },
+      ],
       temperature: 0.1,
+      max_tokens: 500,
+    };
+
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers,
+      body: JSON.stringify(payload),
     });
 
-    return object as ClassifyResult;
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(`OpenRouter error: ${error.error?.message || "Unknown error"}`);
+    }
+
+    const result = await response.json();
+    const content = result.choices[0].message.content;
+
+    try {
+      return JSON.parse(content) as ClassifyResult;
+    } catch {
+      // If JSON parsing fails, try to extract JSON from response
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        return JSON.parse(jsonMatch[0]) as ClassifyResult;
+      }
+      throw new Error(`Invalid JSON response: ${content}`);
+    }
   } catch (error) {
     console.error("Classification error:", error);
     return { persona: "Technical Expert", confidence: 0.3, reasoning: "Parse fallback" };

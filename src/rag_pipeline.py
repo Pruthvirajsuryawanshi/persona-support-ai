@@ -5,14 +5,14 @@ Retrieval-Augmented Generation pipeline.
 Responsibilities:
   1. Document Ingestion  — parse .txt / .md / .pdf from data/
   2. Chunking           — RecursiveCharacterTextSplitter (LangChain)
-  3. Embedding          — Gemini text-embedding-004
+  3. Embedding          — OpenAI text-embedding-3-small via OpenRouter
   4. Storage            — ChromaDB persistent vector database
   5. Retrieval          — Cosine similarity top-K search
 """
 
 import os
+import requests
 from pypdf import PdfReader
-from google import genai
 import chromadb
 
 try:
@@ -21,7 +21,7 @@ except ImportError:
     from langchain.text_splitter import RecursiveCharacterTextSplitter  # type: ignore
 
 from src.config import (
-    GEMINI_API_KEY,
+    OPENROUTER_API_KEY,
     EMBEDDING_MODEL,
     CHUNK_SIZE,
     CHUNK_OVERLAP,
@@ -34,7 +34,7 @@ from src.config import (
 
 class LocalRAGPipeline:
     """
-    Full RAG pipeline backed by ChromaDB (persistent) and Gemini embeddings.
+    Full RAG pipeline backed by ChromaDB (persistent) and OpenRouter embeddings.
 
     Usage:
         pipeline = LocalRAGPipeline()
@@ -43,7 +43,7 @@ class LocalRAGPipeline:
     """
 
     def __init__(self, db_dir: str = CHROMA_DB_DIR):
-        self.genai_client = genai.Client(api_key=GEMINI_API_KEY)
+        self.api_key = OPENROUTER_API_KEY
 
         # Persistent ChromaDB — survives across Streamlit reruns
         self.chroma_client = chromadb.PersistentClient(path=db_dir)
@@ -57,12 +57,31 @@ class LocalRAGPipeline:
     # ── Embedding ──────────────────────────────────────────────────────────────
 
     def get_embedding(self, text: str) -> list[float]:
-        """Convert text to a dense embedding vector via Gemini text-embedding-004."""
-        response = self.genai_client.models.embed_content(
-            model=EMBEDDING_MODEL,
-            contents=text,
+        """Convert text to a dense embedding vector via OpenRouter."""
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "HTTP-Referer": "http://localhost:8080",
+            "X-Title": "Persona Support Agent",
+        }
+        
+        payload = {
+            "model": "openai/text-embedding-3-small",
+            "input": text,
+        }
+        
+        response = requests.post(
+            "https://openrouter.ai/api/v1/embeddings",
+            headers=headers,
+            json=payload,
         )
-        return response.embeddings[0].values
+        
+        if response.status_code != 200:
+            error_msg = response.json().get("error", {}).get("message", "Unknown error")
+            raise Exception(f"Embedding API error: {error_msg}")
+        
+        data = response.json()
+        return data["data"][0]["embedding"]
 
     # ── Ingestion ──────────────────────────────────────────────────────────────
 

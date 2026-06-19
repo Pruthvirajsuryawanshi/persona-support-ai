@@ -3,13 +3,12 @@ src/generator.py
 Persona-Adaptive Response Generator.
 
 Combines the classified persona, retrieved document chunks, and conversation
-history to build a grounded system prompt, then calls Gemini to produce a
+history to build a grounded system prompt, then calls OpenRouter to produce a
 persona-appropriate response.
 """
 
-from google import genai
-from google.genai import types
-from src.config import GEMINI_API_KEY, GEMINI_MODEL
+import requests
+from src.config import OPENROUTER_API_KEY, OPENROUTER_MODEL
 from src.escalator import check_escalation
 
 
@@ -51,24 +50,28 @@ def _build_context_block(context_chunks: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-def _build_conversation_contents(
+def _build_conversation_messages(
     conversation_history: list[dict],
     user_query: str,
-    system_prompt: str,
 ) -> list:
     """
-    Build the multi-turn message list for the Gemini API.
+    Build the multi-turn message list for the OpenRouter API.
 
     conversation_history format:
         [{"role": "user"|"assistant", "content": "..."}]
     """
-    contents = []
+    messages = []
     for turn in conversation_history:
-        role = "user" if turn["role"] == "user" else "model"
-        contents.append(types.Content(role=role, parts=[types.Part(text=turn["content"])]))
+        messages.append({
+            "role": turn["role"],
+            "content": turn["content"]
+        })
     # Append the current query
-    contents.append(types.Content(role="user", parts=[types.Part(text=user_query)]))
-    return contents
+    messages.append({
+        "role": "user",
+        "content": user_query
+    })
+    return messages
 
 
 def generate_adaptive_response(
@@ -125,23 +128,39 @@ def generate_adaptive_response(
         f"FACTUAL CONTEXT DOCUMENTS:\n{context_block}"
     )
 
-    # ── Step 3: Build conversation contents ────────────────────────────────────
-    client = genai.Client(api_key=GEMINI_API_KEY)
-    contents = _build_conversation_contents(history, user_query, full_system_prompt)
+    # ── Step 3: Build conversation messages ───────────────────────────────────
+    messages = _build_conversation_messages(history, user_query)
 
-    # ── Step 4: Generate response ──────────────────────────────────────────────
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=contents,
-        config=types.GenerateContentConfig(
-            system_instruction=full_system_prompt,
-            temperature=0.2,
-        ),
+    # ── Step 4: Generate response via OpenRouter ──────────────────────────────
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": "http://localhost:8080",
+        "X-Title": "Persona Support Agent",
+    }
+    
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [{"role": "system", "content": full_system_prompt}] + messages,
+        "temperature": 0.2,
+        "max_tokens": 1000,
+    }
+    
+    response = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers=headers,
+        json=payload,
     )
+    
+    if response.status_code != 200:
+        error_msg = response.json().get("error", {}).get("message", "Unknown error")
+        raise Exception(f"OpenRouter API error ({response.status_code}): {error_msg}")
+    
+    result = response.json()
+    response_text = result["choices"][0]["message"]["content"]
 
     return {
         "escalated": False,
-        "response": response.text,
+        "response": response_text,
         "handoff_summary": None,
     }
 

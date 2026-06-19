@@ -3,16 +3,15 @@ src/classifier.py
 Persona detection module.
 
 Analyzes an incoming support message and classifies it into one of three
-customer personas using Gemini's structured JSON output:
+customer personas using OpenRouter's Llama model:
   - Technical Expert
   - Frustrated User
   - Business Executive
 """
 
 import json
-from google import genai
-from google.genai import types
-from src.config import GEMINI_API_KEY, GEMINI_MODEL
+import requests
+from src.config import OPENROUTER_API_KEY, OPENROUTER_MODEL
 
 
 def classify_customer_persona(user_message: str) -> dict:
@@ -30,8 +29,6 @@ def classify_customer_persona(user_message: str) -> dict:
         >>> result["persona"]
         'Technical Expert'
     """
-    client = genai.Client(api_key=GEMINI_API_KEY)
-
     system_instruction = (
         "You are an advanced classification engine. Your task is to analyze the "
         "sentiment, vocabulary, and tone of an incoming support message and classify "
@@ -42,35 +39,53 @@ def classify_customer_persona(user_message: str) -> dict:
         "urgency, expresses anger or repeated failure.\n"
         "3. 'Business Executive': Focuses on business impact, ROI, timelines, "
         "deliverables, and brevity. Avoids technical jargon.\n\n"
-        "Provide your evaluation strictly in the requested JSON structure."
+        "Respond ONLY with valid JSON in this exact format:\n"
+        '{"persona": "...", "confidence": 0.0-1.0, "reasoning": "..."}'
     )
 
-    # Structured JSON output schema (Gemini controlled generation)
-    response_schema = {
-        "type": "OBJECT",
-        "properties": {
-            "persona": {
-                "type": "STRING",
-                "enum": ["Technical Expert", "Frustrated User", "Business Executive"],
-            },
-            "confidence": {"type": "NUMBER"},
-            "reasoning": {"type": "STRING"},
-        },
-        "required": ["persona", "confidence", "reasoning"],
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": "http://localhost:8080",
+        "X-Title": "Persona Support Agent",
+        "Content-Type": "application/json",
     }
-
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=user_message,
-        config=types.GenerateContentConfig(
-            system_instruction=system_instruction,
-            response_mime_type="application/json",
-            response_schema=response_schema,
-            temperature=0.1,
-        ),
+    
+    payload = {
+        "model": OPENROUTER_MODEL,
+        "messages": [
+            {"role": "system", "content": system_instruction},
+            {"role": "user", "content": user_message},
+        ],
+        "temperature": 0.1,
+        "max_tokens": 500,
+    }
+    
+    response = requests.post(
+        "https://openrouter.ai/api/v1/chat/completions",
+        headers=headers,
+        json=payload,
     )
-
-    return json.loads(response.text)
+    
+    if response.status_code != 200:
+        error_msg = response.json().get("error", {}).get("message", "Unknown error")
+        raise Exception(f"OpenRouter API error ({response.status_code}): {error_msg}")
+    
+    result = response.json()
+    response_text = result["choices"][0]["message"]["content"]
+    
+    # Parse JSON response
+    try:
+        classification = json.loads(response_text)
+    except json.JSONDecodeError:
+        # If JSON parsing fails, try to extract JSON from the response
+        import re
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            classification = json.loads(json_match.group())
+        else:
+            raise ValueError(f"Could not parse JSON from response: {response_text}")
+    
+    return classification
 
 
 # ── Standalone smoke-test ───────────────────────────────────────────────────────
