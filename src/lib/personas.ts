@@ -30,7 +30,7 @@ export const PERSONA_META: Record<
   },
 };
 
-export const CONFIDENCE_THRESHOLD = 0.45;
+export const CONFIDENCE_THRESHOLD = 0.25;
 
 export const SENSITIVE_KEYWORDS = [
   "refund",

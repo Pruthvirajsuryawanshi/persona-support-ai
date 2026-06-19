@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, Outlet, createFileRoute, useNavigate, useParams } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useServerFn } from "@tanstack/react-start";
-import { Plus, Trash2, LogOut, MessageSquare, Loader2 } from "lucide-react";
+import { Plus, Trash2, LogOut, MessageSquare, Loader2, RefreshCw } from "lucide-react";
 import { listThreads, createThread, deleteThread } from "@/lib/threads.functions";
 import { seedKnowledgeBase, getKnowledgeBaseStatus } from "@/lib/rag.functions";
 import { supabase } from "@/integrations/supabase/client";
@@ -147,15 +147,41 @@ function ChatLayout() {
         </nav>
 
         <div className="border-t border-sidebar-border p-3 text-xs text-muted-foreground space-y-2">
-          <div>
-            Knowledge base:{" "}
-            <span className="text-foreground font-medium">
-              {seeding
-                ? "indexing…"
-                : kbQuery.data
-                  ? `${kbQuery.data.chunkCount} chunks`
-                  : "—"}
+          <div className="flex items-center justify-between">
+            <span>
+              Knowledge base:{" "}
+              <span className="text-foreground font-medium">
+                {seeding
+                  ? "indexing…"
+                  : kbQuery.data
+                    ? `${kbQuery.data.chunkCount} chunks`
+                    : "—"}
+              </span>
             </span>
+            <button
+              type="button"
+              title="Re-index knowledge base"
+              disabled={seeding}
+              className="p-1 rounded hover:bg-sidebar-accent/60 text-muted-foreground hover:text-foreground disabled:opacity-40 transition"
+              onClick={() => {
+                if (seeding) return;
+                setSeeding(true);
+                toast.info("Re-indexing knowledge base…", { duration: 10000 });
+                seedFn()
+                  .then((r) => {
+                    toast.success(`Re-indexed ${r.chunkCount} document chunks`);
+                    queryClient.invalidateQueries({ queryKey: ["kb-status"] });
+                  })
+                  .catch((e: Error) => toast.error(`Re-index failed: ${e.message}`))
+                  .finally(() => setSeeding(false));
+              }}
+            >
+              {seeding ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <RefreshCw className="h-3.5 w-3.5" />
+              )}
+            </button>
           </div>
           <Button
             variant="ghost"

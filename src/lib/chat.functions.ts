@@ -1,19 +1,12 @@
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { PERSONAS, CONFIDENCE_THRESHOLD, SENSITIVE_KEYWORDS, type Persona } from "./personas";
+import { SENSITIVE_KEYWORDS, type Persona } from "./personas";
 
 const SendMessageInput = z.object({
   threadId: z.string().uuid(),
   message: z.string().min(1).max(4000),
 });
-
-type RetrievedChunk = {
-  source: string;
-  title: string | null;
-  content: string;
-  similarity: number;
-};
 
 type ClassifyResult = {
   persona: Persona;
@@ -21,13 +14,28 @@ type ClassifyResult = {
   reasoning: string;
 };
 
+function getApiKey(): string {
+  let apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    try {
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const envContent = fs.readFileSync(path.resolve(process.cwd(), ".env"), "utf-8");
+      const match = envContent.match(/GEMINI_API_KEY="?([^"\n]+)"?/);
+      if (match) apiKey = match[1];
+    } catch {
+      // ignore
+    }
+  }
+  if (!apiKey) throw new Error("Missing GEMINI_API_KEY in environment");
+  return apiKey;
+}
+
 export const sendMessage = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
   .inputValidator((d: unknown) => SendMessageInput.parse(d))
   .handler(async ({ data, context }) => {
-    const apiKey = process.env.LOVABLE_API_KEY;
-    if (!apiKey) throw new Error("Missing LOVABLE_API_KEY");
-
+    const apiKey = getApiKey();
     const { supabase, userId } = context;
 
     // Verify thread belongs to user
@@ -51,46 +59,43 @@ export const sendMessage = createServerFn({ method: "POST" })
       .single();
     if (userMsgErr) throw new Error(userMsgErr.message);
 
-    // 1. Classify persona
+    // 1. Classify persona using Gemini
     const classification = await classifyPersona(apiKey, data.message);
 
-    // 2. Retrieve top-k chunks via embedding + match function
-    const { embedText, createLovableAiGatewayProvider } = await import("./ai-gateway.server");
-    const queryEmbedding = await embedText(apiKey, data.message);
-    const { data: matches, error: matchErr } = await supabase.rpc("match_doc_chunks", {
-      query_embedding: queryEmbedding as unknown as string,
-      match_count: 4,
-    });
-    if (matchErr) throw new Error(`Retrieval failed: ${matchErr.message}`);
-    const chunks: RetrievedChunk[] = (matches ?? []) as RetrievedChunk[];
-    const topScore = chunks.length > 0 ? Math.max(...chunks.map((c) => c.similarity)) : 0;
+    // 2. Fetch conversation history for this thread (last 20 messages, excluding the one just saved)
+    const { data: history } = await supabase
+      .from("messages")
+      .select("role, content")
+      .eq("thread_id", data.threadId)
+      .neq("id", userMsg.id)           // exclude the message we just inserted
+      .order("created_at", { ascending: true })
+      .limit(20);
 
-    // 3. Escalation triggers
+    // Build messages array: prior turns + current user message
+    const conversationMessages: { role: "user" | "assistant"; content: string }[] = [
+      ...(history ?? [])
+        .filter((m) => m.role === "user" || m.role === "assistant")
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
+      { role: "user", content: data.message },
+    ];
+
+    // 3. Check for sensitive keywords — escalate those to human
     const sensitive = SENSITIVE_KEYWORDS.some((kw) =>
       data.message.toLowerCase().includes(kw),
     );
-    const lowConfidence = topScore < CONFIDENCE_THRESHOLD;
-    const escalate = sensitive || lowConfidence;
 
     let assistantContent: string;
     let handoff: Record<string, unknown> | null = null;
 
-    if (escalate) {
+    if (sensitive) {
+      // Sensitive topic → escalate to human agent
       handoff = {
-        reason: sensitive
-          ? "Sensitive topic detected (billing / refund / legal / account modification)"
-          : "Low retrieval confidence",
+        reason: "Sensitive topic detected (billing / refund / legal / account modification)",
         persona: classification.persona,
         persona_confidence: classification.confidence,
-        top_retrieval_score: Number(topScore.toFixed(3)),
         customer_issue: data.message,
-        retrieved_sources: chunks.map((c) => ({
-          source: c.source,
-          similarity: Number(c.similarity.toFixed(3)),
-        })),
-        recommended_action: sensitive
-          ? "Human agent should review the account, verify identity, and address the financial/legal concern directly."
-          : "Knowledge base did not match. Human agent should triage and capture any missing documentation.",
+        recommended_action:
+          "Human agent should review the account, verify identity, and address the financial/legal concern directly.",
         created_at: new Date().toISOString(),
       };
       assistantContent =
@@ -98,40 +103,33 @@ export const sendMessage = createServerFn({ method: "POST" })
           ? "I completely understand how frustrating this is, and I want to make sure it's handled correctly. I'm connecting you with a human specialist right now — they'll have the full context of this conversation when they pick up."
           : classification.persona === "Business Executive"
             ? "This requires direct human handling. I'm routing this to a specialist now. Expected first response: under 15 minutes during business hours. The full context has been packaged for them."
-            : "I don't have a confident answer for this from the knowledge base. I'm escalating to a human engineer with the full conversation context, the persona classification, and the retrieval trace.";
+            : "This topic requires direct human review. I'm escalating to a specialist with the full conversation context.";
     } else {
-      // 4. Adaptive generation
-      const gateway = createLovableAiGatewayProvider(apiKey);
+      // 4. Answer with full conversation history → Gemini 2.5 Flash
+      const { createGeminiProvider } = await import("./ai-gateway.server");
       const { generateText } = await import("ai");
+      const provider = createGeminiProvider(apiKey);
       const personaInstructions = personaPrompt(classification.persona);
-      const contextText = chunks
-        .map(
-          (c, i) =>
-            `[${i + 1}] Source: ${c.source}${c.title ? ` — ${c.title}` : ""} (similarity ${c.similarity.toFixed(2)})\n${c.content}`,
-        )
-        .join("\n\n---\n\n");
 
       const systemPrompt = `${personaInstructions}
 
-CRITICAL RULES:
-- Base your response ONLY on the FACTUAL CONTEXT below.
-- Do not invent steps, URLs, code, or policy that aren't in the context.
-- Cite sources inline using [n] matching the bracketed context entries.
-- If the context doesn't cover an aspect of the question, say so plainly.
-
-FACTUAL CONTEXT:
-${contextText}`;
+You are a helpful customer support AI with memory of this entire conversation.
+RULES:
+- Keep responses SHORT. This is a live chat, not a document.
+- Answer only what was asked. Do not add unrequested sections or caveats.
+- Never use headers (##). Prefer plain sentences or a short bullet list.
+- Be honest if you don't know — never invent URLs, prices, or policies.`;
 
       const { text } = await generateText({
-        model: gateway("google/gemini-3-flash-preview"),
+        model: provider("gemini-2.5-flash"),
         system: systemPrompt,
-        prompt: data.message,
-        temperature: 0.2,
+        messages: conversationMessages,   // ← full history, not just one prompt
+        temperature: 0.3,
       });
       assistantContent = text;
     }
 
-    // 5. Persist assistant message
+    // 4. Persist assistant message
     const { data: assistantMsg, error: aErr } = await supabase
       .from("messages")
       .insert({
@@ -141,20 +139,16 @@ ${contextText}`;
         content: assistantContent,
         persona: classification.persona,
         persona_confidence: classification.confidence,
-        escalated: escalate,
+        escalated: sensitive,
         handoff_summary: handoff as never,
-        sources: chunks.map((c) => ({
-          source: c.source,
-          title: c.title,
-          similarity: Number(c.similarity.toFixed(3)),
-        })) as never,
-        top_score: Number(topScore.toFixed(3)),
+        sources: [] as never,
+        top_score: 0,
       })
       .select("*")
       .single();
     if (aErr) throw new Error(aErr.message);
 
-    // 6. Touch thread + rename if first turn
+    // 5. Touch thread + rename if first turn
     const updates: { updated_at: string; title?: string } = {
       updated_at: new Date().toISOString(),
     };
@@ -173,69 +167,47 @@ ${contextText}`;
 function personaPrompt(persona: Persona): string {
   switch (persona) {
     case "Technical Expert":
-      return `You are a Senior Systems Engineer responding to a fellow technical user.
-- Use precise terminology, exact parameter names, and code blocks where useful.
-- Structure with numbered steps or fenced code where it helps comprehension.
-- Skip soft pleasantries. Get to root cause and verification steps.
-- Mention relevant error codes, headers, and config flags.`;
+      return `You are a Senior Systems Engineer in a live support chat.
+- Be direct and concise — 3 to 6 sentences max.
+- Use bullet points or a short code block only when truly needed.
+- No intros, no "Great question!", no filler. Get straight to the answer.`;
     case "Frustrated User":
-      return `You are an empathetic Customer Care Specialist.
-- Open with one sincere, brief acknowledgment of the inconvenience (no theatrics).
-- Use plain language. Avoid jargon and avoid long paragraphs.
-- Give 3-5 simple bulleted steps the user can do right now.
-- End by offering a clear next step if it still doesn't work.`;
+      return `You are an empathetic support agent in a live chat.
+- Max 4 short sentences or 3 bullet points.
+- One brief empathetic opener (one sentence), then the fix.
+- Plain words only. No jargon.`;
     case "Business Executive":
-      return `You are a concise Client Relations Director responding to a senior stakeholder.
-- Lead with the direct answer or status in one sentence.
-- Quantify impact and timelines where possible.
-- Keep it to under ~120 words. No code. No deep configuration detail.
-- Close with one clear next action.`;
+      return `You are a Client Relations Director in a live chat.
+- Answer in 2–3 sentences max.
+- Lead with the direct answer. One clear next step at the end.
+- No code, no lists, no technical detail.`;
   }
 }
 
 async function classifyPersona(apiKey: string, message: string): Promise<ClassifyResult> {
-  const res = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Lovable-API-Key": apiKey,
-    },
-    body: JSON.stringify({
-      model: "google/gemini-3-flash-preview",
-      temperature: 0.1,
-      messages: [
-        {
-          role: "system",
-          content: `You are a classification engine. Classify the support message into EXACTLY ONE persona:
+  const { createGeminiProvider } = await import("./ai-gateway.server");
+  const { generateObject } = await import("ai");
+  const provider = createGeminiProvider(apiKey);
+
+  try {
+    const { object } = await generateObject({
+      model: provider("gemini-2.5-flash"),
+      schema: z.object({
+        persona: z.enum(["Technical Expert", "Frustrated User", "Business Executive"]),
+        confidence: z.number().min(0).max(1),
+        reasoning: z.string(),
+      }),
+      system: `You are a classification engine. Classify the support message into EXACTLY ONE persona:
 - "Technical Expert": uses APIs/code/configs/jargon, asks systems-level questions.
 - "Frustrated User": emotional, urgent, exclamation marks, expresses inconvenience or anger.
-- "Business Executive": brief, focused on impact, ROI, timelines, deliverables.
+- "Business Executive": brief, focused on impact, ROI, timelines, deliverables.`,
+      prompt: message,
+      temperature: 0.1,
+    });
 
-Respond with ONLY a compact JSON object: {"persona":"...","confidence":0-1,"reasoning":"one short sentence"}.`,
-        },
-        { role: "user", content: message },
-      ],
-      response_format: { type: "json_object" },
-    }),
-  });
-  if (!res.ok) {
-    throw new Error(`Classification failed (${res.status}): ${await res.text()}`);
-  }
-  const json = (await res.json()) as {
-    choices: Array<{ message: { content: string } }>;
-  };
-  const raw = json.choices[0]?.message?.content ?? "{}";
-  try {
-    const parsed = JSON.parse(raw) as ClassifyResult;
-    if (!PERSONAS.includes(parsed.persona)) {
-      return { persona: "Technical Expert", confidence: 0.3, reasoning: "Fallback" };
-    }
-    return {
-      persona: parsed.persona,
-      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
-      reasoning: parsed.reasoning ?? "",
-    };
-  } catch {
+    return object as ClassifyResult;
+  } catch (error) {
+    console.error("Classification error:", error);
     return { persona: "Technical Expert", confidence: 0.3, reasoning: "Parse fallback" };
   }
 }
