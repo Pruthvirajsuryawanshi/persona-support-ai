@@ -6,14 +6,15 @@ An intelligent customer support agent powered by **Gemini 2.5 Flash** that autom
 
 ## ✨ Features
 
-| Feature | Description |
-|---------|-------------|
-| 🧠 **Persona Detection** | Classifies every message into one of 3 personas using Gemini 2.5 Flash |
-| 💬 **Conversation Memory** | Remembers the full thread history — follow-up questions work like ChatGPT |
-| ✍️ **Typewriter Effect** | Responses appear word-by-word for a natural chat experience |
-| 🚨 **Smart Escalation** | Sensitive topics (billing, legal, fraud) auto-route to a human agent |
-| 🔐 **Auth** | Email/password + Google OAuth via Supabase |
-| 🗂️ **Thread Management** | Create, rename, and delete conversation threads |
+| Feature                    | Description                                                                         |
+| -------------------------- | ----------------------------------------------------------------------------------- |
+| 🧠 **Persona Detection**   | Classifies every message into one of 3 personas using Gemini 2.5 Flash              |
+| 💬 **Conversation Memory** | Remembers the full thread history — follow-up questions work like ChatGPT           |
+| ✍️ **Typewriter Effect**   | Responses appear word-by-word for a natural chat experience                         |
+| 📚 **RAG Knowledge Base**  | Retrieves top-K doc chunks via cosine similarity; answers are grounded in `data/`   |
+| 🚨 **Smart Escalation**    | Sensitive topics, low retrieval confidence, or repeated frustration → human handoff |
+| 🔐 **Auth**                | Email/password + Google OAuth via Supabase                                          |
+| 🗂️ **Thread Management**   | Create, rename, and delete conversation threads                                     |
 
 ---
 
@@ -22,14 +23,17 @@ An intelligent customer support agent powered by **Gemini 2.5 Flash** that autom
 The AI detects which of 3 personas the user is, then adapts its tone and format:
 
 ### ⚙️ Technical Expert
+
 - Detects: API terms, error codes, jargon, config questions
 - Responds with: Code blocks, numbered steps, precise terminology, no fluff
 
 ### ❤️ Frustrated User
+
 - Detects: Exclamation marks, emotional language, urgent tone
 - Responds with: Empathy first, plain language, 3–5 simple bullet steps
 
 ### ◆ Business Executive
+
 - Detects: Short messages about impact, ROI, timelines, deliverables
 - Responds with: One-sentence answer, quantified outcomes, under 120 words
 
@@ -43,18 +47,21 @@ When you send a message:
 Your Message
      │
      ├──► Gemini 2.5 Flash ──► Persona Classification
-     │         (Technical Expert / Frustrated User / Business Executive)
      │
-     ├──► Sensitive keyword check?
-     │         (refund, fraud, legal, chargeback, etc.)
-     │         YES → Human escalation message
+     ├──► Embed query ──► Supabase pgvector ──► Top-3 chunks (cosine similarity)
+     │
+     ├──► Escalation check?
+     │         • Sensitive keywords (refund, fraud, legal…)
+     │         • Top similarity score < 0.45
+     │         • Repeated frustrated turns
+     │         YES → Handoff JSON + escalation message
      │         NO  ↓
      │
-     ├──► Fetch last 20 messages from thread (conversation memory)
+     ├──► Fetch last 20 messages (conversation memory)
      │
-     └──► Gemini 2.5 Flash ──► Adaptive response (in your persona's tone)
+     └──► Gemini 2.5 Flash ──► Persona-adaptive, context-grounded response
                                        │
-                               Saved to Supabase → Displayed with typewriter effect
+                               Saved with sources + top_score → typewriter UI
 ```
 
 ---
@@ -62,6 +69,7 @@ Your Message
 ## 🚀 Getting Started
 
 ### Prerequisites
+
 - Node.js 18+
 - A [Supabase](https://supabase.com) project
 - A [Google AI Studio](https://aistudio.google.com/app/apikey) Gemini API key
@@ -99,26 +107,42 @@ npm run dev
 
 Open **http://localhost:8080**
 
+### Knowledge base not indexing?
+
+If every question escalates with *"unable to locate a documented solution"*, the vector index is empty or failed to seed:
+
+1. In [Supabase Dashboard](https://supabase.com/dashboard) → **SQL Editor**, run the migration in `supabase/migrations/20260619104500_doc_chunks_seed_policies.sql` (allows authenticated seeding without a service-role key).
+2. In the app sidebar, click the **refresh icon** next to “Knowledge base” to re-index.
+3. Confirm the sidebar shows something like `120 chunks` (not `0 chunks`).
+
+Optional: add `SUPABASE_SERVICE_ROLE_KEY` to `.env` from Supabase → Project Settings → API if you prefer admin-based seeding.
+
 ---
 
 ## 🛠️ Tech Stack
 
-| Layer | Technology |
-|-------|-----------|
-| Framework | [TanStack Start](https://tanstack.com/start) (React + Vite SSR) |
-| Routing | [TanStack Router](https://tanstack.com/router) |
-| AI | [Google Gemini 2.5 Flash](https://aistudio.google.com) via `@ai-sdk/google` |
-| Database & Auth | [Supabase](https://supabase.com) (Postgres + Row Level Security) |
-| Styling | [Tailwind CSS v4](https://tailwindcss.com) |
-| UI Components | [Radix UI](https://radix-ui.com) + custom AI elements |
-| State | [TanStack Query](https://tanstack.com/query) |
-| Markdown | [Streamdown](https://github.com/streamdown/streamdown) |
+| Layer           | Technology                                                                  |
+| --------------- | --------------------------------------------------------------------------- |
+| Framework       | [TanStack Start](https://tanstack.com/start) (React + Vite SSR)             |
+| Routing         | [TanStack Router](https://tanstack.com/router)                              |
+| AI              | [Google Gemini 2.5 Flash](https://aistudio.google.com) via `@ai-sdk/google` |
+| Database & Auth | [Supabase](https://supabase.com) (Postgres + Row Level Security)            |
+| Styling         | [Tailwind CSS v4](https://tailwindcss.com)                                  |
+| UI Components   | [Radix UI](https://radix-ui.com) + custom AI elements                       |
+| State           | [TanStack Query](https://tanstack.com/query)                                |
+| Markdown        | [Streamdown](https://github.com/streamdown/streamdown)                      |
 
 ---
 
 ## 📁 Project Structure
 
 ```
+data/                           # Knowledge base (.md, .txt, .pdf) — indexed on first run
+├── api_troubleshooting.md
+├── billing_policy.txt
+├── password_reset_guide.pdf
+└── …
+
 src/
 ├── routes/
 │   ├── __root.tsx              # App shell, auth state listener
@@ -139,12 +163,12 @@ src/
 │   └── ai-elements/            # Reusable AI UI primitives
 │
 ├── lib/
-│   ├── chat.functions.ts       # Core: persona classify → memory → Gemini → save
-│   ├── ai-gateway.server.ts    # Gemini provider factory
-│   ├── personas.ts             # Persona types, threshold, sensitive keywords
+│   ├── chat.functions.ts       # Classify → RAG → escalate/generate → save
+│   ├── kb-loader.server.ts     # Load data/ files, chunk, PDF parse
+│   ├── ai-gateway.server.ts    # Gemini provider + embeddings
+│   ├── personas.ts             # Persona types, thresholds, sensitive keywords
 │   ├── threads.functions.ts    # Thread CRUD server functions
-│   ├── rag.functions.ts        # Knowledge base seeding (optional)
-│   └── seed-docs.ts            # Sample support documentation
+│   └── rag.functions.ts        # Knowledge base seeding
 │
 └── integrations/
     └── supabase/               # Supabase client, auth middleware, types
@@ -152,11 +176,33 @@ src/
 
 ---
 
-## ⚡ Escalation Keywords
+## ⚡ Escalation Triggers
 
-The following keywords in a message automatically trigger a human escalation (no AI response):
+Escalation happens when **any** of these is true:
 
-`refund` · `chargeback` · `lawyer` · `legal` · `sue` · `lawsuit` · `cancel my account` · `delete my account` · `duplicate charge` · `fraud` · `unauthorized charge`
+1. **Sensitive keywords** — `refund`, `chargeback`, `lawyer`, `legal`, `sue`, `lawsuit`, `cancel my account`, `delete my account`, `duplicate charge`, `fraud`, `unauthorized charge`, `demand`
+2. **Low retrieval confidence** — top cosine similarity from RAG is below **0.40**
+3. **Repeated frustration** — current message is Frustrated User and a prior turn was also classified Frustrated User
+
+Handoff JSON includes: `persona`, `detected_issue`, `retrieved_sources`, `confidence_score`, `recommended_action`, `escalation_reason`.
+
+---
+
+## 📋 Assignment Alignment (AdSparkX)
+
+| Spec step                                                      | Implementation                                                   |
+| -------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Persona classifier (3 personas, JSON)                          | `src/lib/chat.functions.ts` → `classifyPersona()`                |
+| Knowledge base (`data/` .md/.txt/.pdf)                         | `data/` + `src/lib/kb-loader.server.ts`                          |
+| Chunking (500 / 50 overlap)                                    | `chunkText()` in `kb-loader.server.ts`                           |
+| Vector embeddings + cosine search                              | `embedText()` + Supabase `match_doc_chunks` RPC                  |
+| Persona-adaptive generator                                     | `personaPrompt()` + grounded system prompt                       |
+| Escalation (sensitive / low confidence / repeated frustration) | `sendMessage()` in `chat.functions.ts`                           |
+| Handoff JSON                                                   | `HandoffSummary` in `personas.ts`, shown in `EscalationCard.tsx` |
+
+**Stack note:** Assignment references Python/Streamlit/ChromaDB; this repo uses TypeScript/TanStack Start/Supabase pgvector as an equivalent full-stack implementation.
+
+Regenerate the PDF knowledge base file: `node scripts/generate-pdf.mjs`
 
 ---
 
@@ -180,21 +226,17 @@ npm run format    # Format with Prettier
 
 ---
 
-## 🧪 Example Test Questions
+## 🧪 Verification Scenarios (Assignment)
 
-Try these to see each persona in action:
+| #   | Message                                                                            | Expected                                                   |
+| --- | ---------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| 1   | _"Where is the guide to clear cookies? It's been an hour and nothing is loading!"_ | Frustrated User + steps from `interface_loading_issues.md` |
+| 2   | _"What are the header parameter requirements for bearer token auth?"_              | Technical Expert + headers from `api_troubleshooting.md`   |
+| 3   | _"Our uptime is decreasing. Timeline for billing dispute resolution?"_             | Business Executive + timeline from `billing_policy.txt`    |
+| 4   | _"Database integration causing internal errors"_                                   | Technical Expert + steps from `database_integration.md`    |
+| 5   | _"Duplicate charges. I demand an immediate refund!"_                               | Escalation + handoff JSON (sensitive topic)                |
 
-**⚙️ Technical Expert:**
-> "My API requests are returning 429 errors even below the rate limit. I'm using exponential backoff at 500ms. Could this be a per-endpoint limit? What headers should I inspect?"
-
-**❤️ Frustrated User:**
-> "This is ridiculous! I've been trying to log in for 2 hours and keep getting 'session expired'. Nothing is working!"
-
-**◆ Business Executive:**
-> "What's the SLA for premium support and typical P1 incident resolution time?"
-
-**🚨 Escalation trigger:**
-> "I was charged twice this month and I want a refund immediately."
+Also try an obscure question with no matching docs → low-confidence escalation.
 
 ---
 

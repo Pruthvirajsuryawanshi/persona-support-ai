@@ -1,0 +1,22 @@
+BILLING POLICY
+
+Subscriptions are billed monthly on the day you upgraded. Annual plans are billed once per year and renew automatically.
+
+INVOICES
+Find invoices under Settings → Billing → Invoices. Each PDF contains line items, applicable taxes, and the payment method used.
+
+FAILED PAYMENTS
+If a charge fails we retry on day 1, 3, and 7. After the third failed attempt the subscription is downgraded to Free. Update your card under Settings → Billing → Payment Method to restore service.
+
+DISPUTES AND REFUNDS
+For incorrect charges, open Settings → Billing → "Dispute a charge" and describe the issue. Disputes are reviewed within 2 business days. Approved refunds are returned to the original payment method within 5-10 business days depending on the issuer.
+
+DUPLICATE CHARGES
+Duplicate charges are typically authorization holds released within 3-5 business days. If both charges settle, file a dispute — it is fast-tracked and resolved within 1 business day.
+
+PLAN CHANGES
+Upgrades take effect immediately and are prorated. Downgrades take effect at the next renewal so you retain paid features until the period ends.
+
+BILLING DISPUTE TIMELINE
+Standard disputes: 2 business days review, 5-10 business days refund processing.
+Fast-tracked duplicate charge disputes: 1 business day resolution.

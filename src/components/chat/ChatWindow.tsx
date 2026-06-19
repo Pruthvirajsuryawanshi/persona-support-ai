@@ -74,6 +74,7 @@ export function ChatWindow({ threadId }: { threadId: string }) {
   const [typingPersona, setTypingPersona] = useState<Persona | null>(null);
   const [typingEscalated, setTypingEscalated] = useState(false);
   const [typingHandoff, setTypingHandoff] = useState<Record<string, unknown> | null>(null);
+  const [typingSources, setTypingSources] = useState<Source[]>([]);
   const [showTyping, setShowTyping] = useState(false);
 
   const { displayed, done } = useTypewriter(typingContent, showTyping);
@@ -87,6 +88,7 @@ export function ChatWindow({ threadId }: { threadId: string }) {
         setTypingPersona(null);
         setTypingEscalated(false);
         setTypingHandoff(null);
+        setTypingSources([]);
         queryClient.invalidateQueries({ queryKey: ["messages", threadId] });
         queryClient.invalidateQueries({ queryKey: ["threads"] });
       }, 120);
@@ -107,6 +109,7 @@ export function ChatWindow({ threadId }: { threadId: string }) {
       setTypingPersona(result.classification?.persona ?? null);
       setTypingEscalated(assistant.escalated ?? false);
       setTypingHandoff((assistant.handoff_summary as Record<string, unknown> | null) ?? null);
+      setTypingSources((assistant.sources as Source[] | null) ?? []);
       setTypingContent(assistant.content ?? "");
       setShowTyping(true);
     },
@@ -200,11 +203,13 @@ export function ChatWindow({ threadId }: { threadId: string }) {
                 ) : (
                   <div className="prose prose-sm dark:prose-invert max-w-none">
                     <Streamdown>{displayed}</Streamdown>
-                    {/* Blinking cursor while typing */}
                     {!done && (
                       <span className="inline-block w-0.5 h-4 bg-current ml-0.5 animate-pulse" />
                     )}
                   </div>
+                )}
+                {!typingEscalated && typingSources.length > 0 && (
+                  <SourcesList sources={typingSources} />
                 )}
               </MessageContent>
             </Message>

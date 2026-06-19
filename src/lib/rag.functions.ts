@@ -1,5 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
+import { z } from "zod";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
+import { seedKnowledgeBaseCore } from "./kb-seed.server";
+
+const SeedInput = z.object({ force: z.boolean().optional() }).optional();
 
 export const getKnowledgeBaseStatus = createServerFn({ method: "GET" })
   .middleware([requireSupabaseAuth])
@@ -8,52 +12,42 @@ export const getKnowledgeBaseStatus = createServerFn({ method: "GET" })
       .from("doc_chunks")
       .select("*", { count: "exact", head: true });
     if (error) throw new Error(error.message);
-    return { chunkCount: count ?? 0 };
+
+    const dbCount = count ?? 0;
+    if (dbCount > 0) return { chunkCount: dbCount, source: "database" as const };
+
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const cacheFile = path.resolve(process.cwd(), ".rag-cache", "index.json");
+    if (fs.existsSync(cacheFile)) {
+      try {
+        const cached = JSON.parse(fs.readFileSync(cacheFile, "utf-8")) as unknown[];
+        return { chunkCount: cached.length, source: "local" as const };
+      } catch {
+        // fall through
+      }
+    }
+
+    const dataDir = path.resolve(process.cwd(), "data");
+    const fileCount = fs.existsSync(dataDir)
+      ? fs.readdirSync(dataDir).filter((f) => /\.(md|txt|pdf)$/i.test(f)).length
+      : 0;
+    return { chunkCount: 0, source: "none" as const, docCount: fileCount };
   });
 
 export const seedKnowledgeBase = createServerFn({ method: "POST" })
   .middleware([requireSupabaseAuth])
-  .handler(async () => {
+  .inputValidator((d: unknown) => SeedInput.parse(d))
+  .handler(async ({ data, context }) => {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error("Missing GEMINI_API_KEY in environment");
 
-    const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
-    const { SEED_DOCS } = await import("./seed-docs");
-    const { embedText } = await import("./ai-gateway.server");
-
-    // Always clear and re-seed so embeddings stay in sync with the current model.
-    await supabaseAdmin.from("doc_chunks").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-
-    const CHUNK_SIZE = 600;
-    const OVERLAP = 80;
-    function chunk(text: string): string[] {
-      const out: string[] = [];
-      let i = 0;
-      while (i < text.length) {
-        out.push(text.slice(i, i + CHUNK_SIZE));
-        if (i + CHUNK_SIZE >= text.length) break;
-        i += CHUNK_SIZE - OVERLAP;
-      }
-      return out;
+    try {
+      return await seedKnowledgeBaseCore(context.supabase, apiKey, data?.force ?? false);
+    } catch (error) {
+      const { clearLocalRagCache, prewarmLocalIndex } = await import("./local-rag.server");
+      if (data?.force) clearLocalRagCache();
+      const chunkCount = await prewarmLocalIndex(apiKey);
+      return { seeded: true, chunkCount, source: "local" as const };
     }
-
-    let inserted = 0;
-    for (const doc of SEED_DOCS) {
-      const chunks = chunk(doc.content);
-      for (let idx = 0; idx < chunks.length; idx++) {
-        const c = chunks[idx];
-        const embedding = await embedText(apiKey, c);
-        const { error } = await supabaseAdmin.from("doc_chunks").insert({
-          source: doc.source,
-          title: doc.title,
-          chunk_index: idx,
-          content: c,
-          // pgvector accepts a JSON array literal as text
-          embedding: embedding as unknown as string,
-        });
-        if (error) throw new Error(`Insert failed: ${error.message}`);
-        inserted++;
-      }
-    }
-    return { seeded: true, chunkCount: inserted };
   });

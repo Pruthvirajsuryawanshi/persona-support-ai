@@ -33,3 +33,6 @@ dist-ssr
 
 # Environment
 .env
+
+# Local RAG embedding cache (rebuilt from data/)
+.rag-cache/

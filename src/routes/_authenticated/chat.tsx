@@ -54,7 +54,10 @@ function ChatLayout() {
           toast.success(`Indexed ${r.chunkCount} document chunks`);
           queryClient.invalidateQueries({ queryKey: ["kb-status"] });
         })
-        .catch((e: Error) => toast.error(`Indexing failed: ${e.message}`))
+        .catch((e: Error) => {
+          toast.warning(`Database index unavailable — building local index…`);
+          console.warn("KB seed:", e.message);
+        })
         .finally(() => setSeeding(false));
     }
   }, [kbQuery.data, seedFn, queryClient, seeding]);
@@ -151,11 +154,7 @@ function ChatLayout() {
             <span>
               Knowledge base:{" "}
               <span className="text-foreground font-medium">
-                {seeding
-                  ? "indexing…"
-                  : kbQuery.data
-                    ? `${kbQuery.data.chunkCount} chunks`
-                    : "—"}
+                {seeding ? "indexing…" : kbQuery.data ? `${kbQuery.data.chunkCount} chunks${kbQuery.data.source === "local" ? " (local)" : ""}` : "—"}
               </span>
             </span>
             <button
@@ -167,7 +166,7 @@ function ChatLayout() {
                 if (seeding) return;
                 setSeeding(true);
                 toast.info("Re-indexing knowledge base…", { duration: 10000 });
-                seedFn()
+                seedFn({ data: { force: true } })
                   .then((r) => {
                     toast.success(`Re-indexed ${r.chunkCount} document chunks`);
                     queryClient.invalidateQueries({ queryKey: ["kb-status"] });

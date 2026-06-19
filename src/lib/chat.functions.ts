@@ -1,7 +1,17 @@
+import fs from "node:fs";
+import path from "node:path";
 import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireSupabaseAuth } from "@/integrations/supabase/auth-middleware";
-import { SENSITIVE_KEYWORDS, type Persona } from "./personas";
+import type { Database } from "@/integrations/supabase/types";
+import {
+  RETRIEVAL_CONFIDENCE_THRESHOLD,
+  SENSITIVE_KEYWORDS,
+  type HandoffSummary,
+  type Persona,
+  type RetrievedChunk,
+} from "./personas";
 
 const SendMessageInput = z.object({
   threadId: z.string().uuid(),
@@ -14,12 +24,12 @@ type ClassifyResult = {
   reasoning: string;
 };
 
+const TOP_K = 3;
+
 function getApiKey(): string {
   let apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
     try {
-      const fs = require("node:fs");
-      const path = require("node:path");
       const envContent = fs.readFileSync(path.resolve(process.cwd(), ".env"), "utf-8");
       const match = envContent.match(/GEMINI_API_KEY="?([^"\n]+)"?/);
       if (match) apiKey = match[1];
@@ -38,7 +48,6 @@ export const sendMessage = createServerFn({ method: "POST" })
     const apiKey = getApiKey();
     const { supabase, userId } = context;
 
-    // Verify thread belongs to user
     const { data: thread, error: threadErr } = await supabase
       .from("threads")
       .select("id, title")
@@ -46,7 +55,6 @@ export const sendMessage = createServerFn({ method: "POST" })
       .single();
     if (threadErr || !thread) throw new Error("Thread not found");
 
-    // Persist user message immediately
     const { data: userMsg, error: userMsgErr } = await supabase
       .from("messages")
       .insert({
@@ -59,19 +67,23 @@ export const sendMessage = createServerFn({ method: "POST" })
       .single();
     if (userMsgErr) throw new Error(userMsgErr.message);
 
-    // 1. Classify persona using Gemini
     const classification = await classifyPersona(apiKey, data.message);
 
-    // 2. Fetch conversation history for this thread (last 20 messages, excluding the one just saved)
+    const { ensureKnowledgeBaseSeeded } = await import("./kb-seed.server");
+    try {
+      await ensureKnowledgeBaseSeeded(supabase, apiKey);
+    } catch (seedError) {
+      console.warn("Supabase KB seed skipped, will use local fallback:", seedError);
+    }
+
     const { data: history } = await supabase
       .from("messages")
-      .select("role, content")
+      .select("role, content, persona")
       .eq("thread_id", data.threadId)
-      .neq("id", userMsg.id)           // exclude the message we just inserted
+      .neq("id", userMsg.id)
       .order("created_at", { ascending: true })
       .limit(20);
 
-    // Build messages array: prior turns + current user message
     const conversationMessages: { role: "user" | "assistant"; content: string }[] = [
       ...(history ?? [])
         .filter((m) => m.role === "user" || m.role === "assistant")
@@ -79,57 +91,76 @@ export const sendMessage = createServerFn({ method: "POST" })
       { role: "user", content: data.message },
     ];
 
-    // 3. Check for sensitive keywords — escalate those to human
-    const sensitive = SENSITIVE_KEYWORDS.some((kw) =>
-      data.message.toLowerCase().includes(kw),
-    );
+    const retrievedChunks = await retrieveContext(supabase, apiKey, data.message);
+    const topScore =
+      retrievedChunks.length > 0 ? Math.max(...retrievedChunks.map((c) => c.similarity)) : 0;
+
+    const sensitive = SENSITIVE_KEYWORDS.some((kw) => data.message.toLowerCase().includes(kw));
+
+    const priorFrustratedTurns = (history ?? []).filter(
+      (m) => m.role === "assistant" && m.persona === "Frustrated User",
+    ).length;
+    const repeatedFrustration =
+      classification.persona === "Frustrated User" && priorFrustratedTurns >= 1;
+
+    const lowConfidence = retrievedChunks.length === 0 || topScore < RETRIEVAL_CONFIDENCE_THRESHOLD;
+
+    const shouldEscalate = sensitive || lowConfidence || repeatedFrustration;
 
     let assistantContent: string;
-    let handoff: Record<string, unknown> | null = null;
+    let handoff: HandoffSummary | null = null;
 
-    if (sensitive) {
-      // Sensitive topic → escalate to human agent
+    if (shouldEscalate) {
+      const escalationReason: HandoffSummary["escalation_reason"] = sensitive
+        ? "sensitive_topic"
+        : repeatedFrustration
+          ? "repeated_frustration"
+          : "low_confidence";
+
       handoff = {
-        reason: "Sensitive topic detected (billing / refund / legal / account modification)",
         persona: classification.persona,
-        persona_confidence: classification.confidence,
-        customer_issue: data.message,
-        recommended_action:
-          "Human agent should review the account, verify identity, and address the financial/legal concern directly.",
-        created_at: new Date().toISOString(),
+        detected_issue: data.message,
+        retrieved_sources: [...new Set(retrievedChunks.map((c) => c.source))],
+        confidence_score: topScore,
+        recommended_action: recommendedAction(escalationReason, classification.persona),
+        escalation_reason: escalationReason,
       };
-      assistantContent =
-        classification.persona === "Frustrated User"
-          ? "I completely understand how frustrating this is, and I want to make sure it's handled correctly. I'm connecting you with a human specialist right now — they'll have the full context of this conversation when they pick up."
-          : classification.persona === "Business Executive"
-            ? "This requires direct human handling. I'm routing this to a specialist now. Expected first response: under 15 minutes during business hours. The full context has been packaged for them."
-            : "This topic requires direct human review. I'm escalating to a specialist with the full conversation context.";
+
+      assistantContent = escalationMessage(classification.persona, escalationReason);
     } else {
-      // 4. Answer with full conversation history → Gemini 2.5 Flash
       const { createGeminiProvider } = await import("./ai-gateway.server");
       const { generateText } = await import("ai");
       const provider = createGeminiProvider(apiKey);
       const personaInstructions = personaPrompt(classification.persona);
+      const contextBlock = buildContextBlock(retrievedChunks);
 
       const systemPrompt = `${personaInstructions}
 
-You are a helpful customer support AI with memory of this entire conversation.
-RULES:
+CRITICAL RULES:
+- Base your response ONLY on the provided context documents below.
+- Do not hallucinate URLs, prices, policies, or steps not found in the context.
+- If the context does not contain enough detail, say so briefly.
 - Keep responses SHORT. This is a live chat, not a document.
-- Answer only what was asked. Do not add unrequested sections or caveats.
-- Never use headers (##). Prefer plain sentences or a short bullet list.
-- Be honest if you don't know — never invent URLs, prices, or policies.`;
+- Answer only what was asked. Never use headers (##).
+
+FACTUAL CONTEXT DOCUMENTS:
+${contextBlock}`;
 
       const { text } = await generateText({
         model: provider("gemini-2.5-flash"),
         system: systemPrompt,
-        messages: conversationMessages,   // ← full history, not just one prompt
-        temperature: 0.3,
+        messages: conversationMessages,
+        temperature: 0.2,
       });
       assistantContent = text;
     }
 
-    // 4. Persist assistant message
+    const sourcesForDb = retrievedChunks.map((c) => ({
+      source: c.source,
+      title: c.title,
+      similarity: c.similarity,
+    }));
+
     const { data: assistantMsg, error: aErr } = await supabase
       .from("messages")
       .insert({
@@ -139,16 +170,15 @@ RULES:
         content: assistantContent,
         persona: classification.persona,
         persona_confidence: classification.confidence,
-        escalated: sensitive,
+        escalated: shouldEscalate,
         handoff_summary: handoff as never,
-        sources: [] as never,
-        top_score: 0,
+        sources: sourcesForDb as never,
+        top_score: topScore,
       })
       .select("*")
       .single();
     if (aErr) throw new Error(aErr.message);
 
-    // 5. Touch thread + rename if first turn
     const updates: { updated_at: string; title?: string } = {
       updated_at: new Date().toISOString(),
     };
@@ -164,23 +194,105 @@ RULES:
     };
   });
 
+async function retrieveContext(
+  supabase: SupabaseClient<Database>,
+  apiKey: string,
+  query: string,
+): Promise<RetrievedChunk[]> {
+  const fromDb = await retrieveFromSupabase(supabase, apiKey, query);
+  if (fromDb.length > 0) return fromDb;
+
+  const { retrieveLocalContext } = await import("./local-rag.server");
+  return retrieveLocalContext(apiKey, query, TOP_K);
+}
+
+async function retrieveFromSupabase(
+  supabase: SupabaseClient<Database>,
+  apiKey: string,
+  query: string,
+): Promise<RetrievedChunk[]> {
+  const { embedText } = await import("./ai-gateway.server");
+  const { toVectorLiteral } = await import("./kb-loader.server");
+
+  const embedding = await embedText(apiKey, query);
+  const { data, error } = await supabase.rpc("match_doc_chunks", {
+    query_embedding: toVectorLiteral(embedding),
+    match_count: TOP_K,
+  });
+
+  if (error) {
+    console.warn("Supabase RAG retrieval error:", error.message);
+    return [];
+  }
+
+  return (
+    (data ?? []) as Array<{
+      source: string;
+      title: string | null;
+      content: string;
+      similarity: number;
+    }>
+  ).map((row) => ({
+    source: row.source,
+    title: row.title,
+    content: row.content,
+    similarity: row.similarity,
+  }));
+}
+
+function buildContextBlock(chunks: RetrievedChunk[]): string {
+  if (chunks.length === 0) return "(No matching documents found.)";
+  return chunks.map((c) => `Source [${c.source}]: ${c.content}`).join("\n\n");
+}
+
+function recommendedAction(reason: HandoffSummary["escalation_reason"], persona: Persona): string {
+  switch (reason) {
+    case "sensitive_topic":
+      return "Human agent should review the account, verify identity, and address the financial or legal concern directly.";
+    case "repeated_frustration":
+      return "Prioritize this ticket — customer shows sustained frustration. Review conversation history and contact directly.";
+    case "low_confidence":
+      return "Review system logs, verify documentation coverage, and contact the user with a researched answer.";
+    default:
+      return `Assign to a specialist familiar with ${persona} communication style.`;
+  }
+}
+
+function escalationMessage(persona: Persona, reason: HandoffSummary["escalation_reason"]): string {
+  if (reason === "low_confidence") {
+    return persona === "Frustrated User"
+      ? "I apologize — I couldn't find the precise answer in our documentation. I'm connecting you with a live specialist who can help right away."
+      : persona === "Business Executive"
+        ? "I don't have sufficient documentation to answer confidently. Routing to a specialist now — expected first response under 15 minutes during business hours."
+        : "I was unable to locate a documented solution for this request. Escalating to a human specialist with full conversation context.";
+  }
+
+  if (reason === "repeated_frustration") {
+    return "I can see this has been frustrating, and I want to make sure you get the right help. I'm connecting you with a human specialist who will have the full context of this conversation.";
+  }
+
+  return persona === "Frustrated User"
+    ? "I completely understand how frustrating this is, and I want to make sure it's handled correctly. I'm connecting you with a human specialist right now — they'll have the full context of this conversation when they pick up."
+    : persona === "Business Executive"
+      ? "This requires direct human handling. I'm routing this to a specialist now. Expected first response: under 15 minutes during business hours. The full context has been packaged for them."
+      : "This topic requires direct human review. I'm escalating to a specialist with the full conversation context.";
+}
+
 function personaPrompt(persona: Persona): string {
   switch (persona) {
     case "Technical Expert":
       return `You are a Senior Systems Engineer in a live support chat.
+- Provide clear root-cause analysis, configuration specs, and precise API pathways or code blocks when the context supports it.
 - Be direct and concise — 3 to 6 sentences max.
-- Use bullet points or a short code block only when truly needed.
-- No intros, no "Great question!", no filler. Get straight to the answer.`;
+- Use bullet points or a short code block only when truly needed.`;
     case "Frustrated User":
-      return `You are an empathetic support agent in a live chat.
-- Max 4 short sentences or 3 bullet points.
-- One brief empathetic opener (one sentence), then the fix.
-- Plain words only. No jargon.`;
+      return `You are a deeply empathetic Customer Care Specialist in a live chat.
+- Begin with one brief empathetic validation, then simple action-oriented bullet steps.
+- Max 4 short sentences or 3 bullet points. Plain words only — no jargon.`;
     case "Business Executive":
-      return `You are a Client Relations Director in a live chat.
-- Answer in 2–3 sentences max.
-- Lead with the direct answer. One clear next step at the end.
-- No code, no lists, no technical detail.`;
+      return `You are a concise Client Relations Director in a live chat.
+- Focus on direct business outcomes, impact summaries, and timelines for resolution.
+- Answer in 2–3 sentences max. No code, no lists, no technical detail.`;
   }
 }
 
