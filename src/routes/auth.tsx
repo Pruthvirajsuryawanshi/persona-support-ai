@@ -134,7 +134,7 @@ function AuthPage() {
             <div className="p-4 border rounded-md bg-muted/50 text-sm flex flex-col items-center">
               <p className="font-medium mb-1">Demo Credentials</p>
               <p className="text-muted-foreground">Email: demo@example.com</p>
-              <p className="text-muted-foreground mb-3">Password: SuperDemoPersona!2026</p>
+              <p className="text-muted-foreground mb-3">Password: DemoPassword123!</p>
               <Button 
                 type="button" 
                 variant="outline" 
@@ -142,7 +142,7 @@ function AuthPage() {
                 className="w-full"
                 onClick={() => {
                   setEmail("demo@example.com");
-                  setPassword("SuperDemoPersona!2026");
+                  setPassword("DemoPassword123!");
                 }}
               >
                 Fill Credentials
