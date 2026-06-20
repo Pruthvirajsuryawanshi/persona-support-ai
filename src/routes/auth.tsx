@@ -133,16 +133,16 @@ function AuthPage() {
           {mode === "signin" && (
             <div className="p-4 border rounded-md bg-muted/50 text-sm flex flex-col items-center">
               <p className="font-medium mb-1">Demo Credentials</p>
-              <p className="text-muted-foreground">Email: demo@example.com</p>
-              <p className="text-muted-foreground mb-3">Password: DemoPassword123!</p>
+              <p className="text-muted-foreground">Email: DemoCredentials@gmail.com</p>
+              <p className="text-muted-foreground mb-3">Password: DemoExample@#3434</p>
               <Button 
                 type="button" 
                 variant="outline" 
                 size="sm" 
                 className="w-full"
                 onClick={() => {
-                  setEmail("demo@example.com");
-                  setPassword("DemoPassword123!");
+                  setEmail("DemoCredentials@gmail.com");
+                  setPassword("DemoExample@#3434");
                 }}
               >
                 Fill Credentials
